@@ -1,0 +1,26 @@
+[package]
+name = "v8-artifact-probe"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+name = "v8_artifact_probe"
+path = "src/lib.rs"
+
+[features]
+# The staged native archive must match the sandbox-enabled binding configuration.
+sandbox = ["v8/v8_enable_sandbox"]
+
+[dependencies]
+v8 = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+
+[lints.rust]
+# The linked-library configuration probe needs one upstream test-only FFI call.
+# Keep unsafe denied elsewhere; the single probe test documents its exception.
+unsafe_code = "deny"

@@ -1,4 +1,9 @@
 __pycache__/
 .cache/
-build-source/
+.build/
+target/
 dist/
+probes/
+upstream-rusty-v8/
+user.bazelrc
+bazel-*

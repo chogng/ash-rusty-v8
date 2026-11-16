@@ -1,0 +1,165 @@
+//! Small V8 link-and-execute probe used by Cargo and Bazel.
+//!
+//! This crate deliberately stays separate from Code Mode. It answers one narrow question: can
+//! this target compile, link, initialize, and execute the exact V8 crate selected by the workspace?
+
+/// Returns the V8 version from the linked library.
+#[cfg(test)]
+fn embedded_v8_version() -> &'static str {
+    v8::V8::get_version()
+}
+
+/// Reports whether this build enabled the V8 sandbox feature at compile time.
+#[cfg(test)]
+const fn sandbox_feature_enabled() -> bool {
+    cfg!(feature = "sandbox")
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use std::sync::Once;
+
+    use super::{embedded_v8_version, sandbox_feature_enabled};
+
+    fn initialize_v8() {
+        static INIT: Once = Once::new();
+
+        INIT.call_once(|| {
+            // This probe tests the linked engine fix with optimizations enabled,
+            // independently of the product runtime's conservative safety flags.
+            v8::V8::set_flags_from_string("--allow-natives-syntax --maglev");
+            v8::V8::initialize_platform(v8::new_default_platform(0, false).make_shared());
+            v8::V8::initialize();
+        });
+    }
+
+    fn evaluate_expression(expression: &str) -> String {
+        initialize_v8();
+
+        let isolate = &mut v8::Isolate::new(Default::default());
+        v8::scope!(let scope, isolate);
+
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        let source = v8::String::new(scope, expression).expect("expression should be valid UTF-8");
+        let tc = std::pin::pin!(v8::TryCatch::new(scope));
+        let scope = &mut tc.init();
+        let result = v8::Script::compile(scope, source, None).and_then(|script| script.run(scope));
+        if let Some(exception) = scope.exception() {
+            panic!("{}", exception.to_rust_string_lossy(scope));
+        }
+        result
+            .expect("expression should evaluate")
+            .to_rust_string_lossy(scope)
+    }
+
+    #[test]
+    fn exposes_embedded_v8_version() {
+        assert!(!embedded_v8_version().is_empty());
+    }
+
+    #[test]
+    #[expect(
+        unsafe_code,
+        reason = "verify the linked V8 archive through its upstream test binding"
+    )]
+    fn sandbox_feature_matches_linked_v8() {
+        unsafe extern "C" {
+            fn v8__V8__IsSandboxEnabled() -> bool;
+        }
+
+        // SAFETY: The pinned upstream binding takes no arguments and returns a
+        // boolean build setting; it needs no initialized isolate or pointers.
+        // Comparing only Rust cfg flags would miss a mismatched archive.
+        let linked_sandbox_enabled = unsafe { v8__V8__IsSandboxEnabled() };
+        assert_eq!(linked_sandbox_enabled, sandbox_feature_enabled());
+    }
+
+    #[test]
+    fn evaluates_integer_addition() {
+        assert_eq!(evaluate_expression("1 + 2"), "3");
+    }
+
+    #[test]
+    fn array_sort_preserves_elements_across_comparator_mutation() {
+        assert_eq!(
+            evaluate_expression(include_str!("array_sort_regression.js")),
+            "true"
+        );
+    }
+
+    #[test]
+    fn generated_typed_array_bindings_preserve_backing_store_bytes() {
+        initialize_v8();
+        let isolate = &mut v8::Isolate::new(Default::default());
+        v8::scope!(let scope, isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        let buffer = v8::ArrayBuffer::new(scope, 3);
+        for (cell, byte) in buffer.get_backing_store().iter().zip([7, 11, 13]) {
+            cell.set(byte);
+        }
+        let array = v8::Uint8Array::new(scope, buffer, 1, 2).unwrap();
+        assert_eq!(array.length(), 2);
+        let value: v8::Local<v8::Value> = array.into();
+        assert!(value.is_uint8_array());
+        let restored = v8::Local::<v8::Uint8Array>::try_from(value).unwrap();
+        let mut bytes = [0; 2];
+        assert_eq!(restored.copy_contents(&mut bytes), 2);
+        assert_eq!(bytes, [11, 13]);
+    }
+
+    #[test]
+    fn typed_array_inline_storage_matches_binding() {
+        initialize_v8();
+        let isolate = &mut v8::Isolate::new(Default::default());
+        v8::scope!(let scope, isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let scope = &mut v8::ContextScope::new(scope, context);
+        let inline_limit = v8::TYPED_ARRAY_MAX_SIZE_IN_HEAP;
+
+        for length in [
+            0,
+            1,
+            inline_limit.saturating_sub(1),
+            inline_limit,
+            inline_limit + 1,
+        ] {
+            v8::scope!(let scope, scope);
+            let source =
+                v8::String::new(scope, &format!("new Uint8Array({length}).fill(90)")).unwrap();
+            let value = v8::Script::compile(scope, source, None)
+                .unwrap()
+                .run(scope)
+                .unwrap();
+            let view = v8::Local::<v8::ArrayBufferView>::try_from(value).unwrap();
+            let inline = inline_limit != 0 && length <= inline_limit;
+            // Detect a stale binding before passing its buffer size to native code.
+            assert_eq!(
+                view.has_buffer(),
+                !inline,
+                "TypedArray length {length}, binding inline limit {inline_limit}"
+            );
+            let mut storage = vec![0; inline_limit];
+            assert_eq!(view.get_contents(&mut storage), vec![90; length]);
+            assert_eq!(view.has_buffer(), !inline);
+        }
+    }
+
+    #[test]
+    fn evaluates_string_concatenation() {
+        assert_eq!(evaluate_expression("'hello ' + 'world'"), "hello world");
+    }
+
+    #[test]
+    fn parses_crdtp_dispatchable_messages() {
+        let cbor = v8::crdtp::json_to_cbor(br#"{"id":7,"method":"Runtime.evaluate","params":{}}"#)
+            .expect("JSON should convert to CBOR");
+        let dispatchable = v8::crdtp::Dispatchable::new(&cbor);
+
+        assert!(dispatchable.ok());
+        assert_eq!(dispatchable.call_id(), 7);
+        assert_eq!(dispatchable.method(), b"Runtime.evaluate");
+    }
+}

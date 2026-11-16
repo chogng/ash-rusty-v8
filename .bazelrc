@@ -1,0 +1,43 @@
+# Keep local configuration outside version control.
+
+common --enable_platform_specific_config
+common --incompatible_strict_action_env
+common --test_output=errors
+common --symlink_prefix=.build/bazel-
+
+# Persist local action results across Bazel server/output-base churn. On WSL,
+# keep the cache on Linux's filesystem instead of the Windows workspace mount.
+common:windows --disk_cache=.build/bazel-disk-cache
+common:linux --disk_cache=~/.cache/ash/bazel-disk-cache
+common:macos --disk_cache=~/.cache/ash/bazel-disk-cache
+
+# Let Bazel coordinate eviction with active cache users, including in containers.
+common --experimental_disk_cache_gc_max_size=4G
+common --experimental_disk_cache_gc_max_age=7d
+
+# Do not probe the machine's Xcode installation; the SDK is supplied by
+# MODULE.bazel and the LLVM toolchain.
+common --xcode_version_config=//:disable_xcode
+
+# Keep Linux and Windows host tools aligned with the hermetic target ABI.
+# rules_rs is patched to use gnullvm-hosted Rust tools on Windows so rustc,
+# proc-macro DLLs, and the LLVM/MinGW linker share one ABI.
+common:linux --host_platform=//:local_linux
+
+# LLVM stays the default. Standalone Windows V8 hosts explicitly select the
+# MSVC toolchain discovered by rules_cc from Visual Studio Build Tools.
+# Keep Apple's toolchain discovery disabled; its SDK remains hermetic.
+common --repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1
+
+# Local source builds share Bazel's action cache and expose each compile action.
+# The archive rule applies its C++ flags to the source closure and exec tools.
+build:v8-source --//:rusty_v8_from_source=True
+build:v8-source --compilation_mode=opt
+build:v8-source --show_result=10
+
+# Host mksnapshot must generate code for the target CPU during cross-builds.
+# Preserve this explicit V8 flag through the exec transition as Codex does.
+build:v8-source-arm64 --config=v8-source
+build:v8-source-arm64 --@v8//bazel/config:v8_target_cpu=arm64
+build:v8-source-x64 --config=v8-source
+build:v8-source-x64 --@v8//bazel/config:v8_target_cpu=x64

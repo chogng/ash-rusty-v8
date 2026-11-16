@@ -1,0 +1,26 @@
+===================================================================
+--- a/rs/platforms/triples.bzl
++++ b/rs/platforms/triples.bzl
+@@ -35,8 +35,8 @@
+ SUPPORTED_EXEC_TRIPLES = [
+     "x86_64-unknown-linux-gnu",
+     "aarch64-unknown-linux-gnu",
+-    "x86_64-pc-windows-msvc",
+-    "aarch64-pc-windows-msvc",
++    "x86_64-pc-windows-gnullvm",
++    "aarch64-pc-windows-gnullvm",
+     "x86_64-apple-darwin",
+     "aarch64-apple-darwin",
+ ]
+===================================================================
+--- a/rs/toolchains/declare_rustc_toolchains.bzl
++++ b/rs/toolchains/declare_rustc_toolchains.bzl
+@@ -207,7 +207,7 @@
+                 exec_compatible_with = [
+                     "@platforms//os:" + exec_triple.system,
+                     "@platforms//cpu:" + exec_triple.arch,
+-                ],
++                ] + (["@llvm//constraints/windows/abi:gnullvm"] if exec_triple.system == "windows" else []),
+                 target_settings = [
+                     "@rules_rs//rs/toolchains:bpf_targets" if is_bpf else "@rules_rs//rs/toolchains:non_bpf_targets",
+                     bootstrap_setting,

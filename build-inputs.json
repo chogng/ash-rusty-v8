@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "buildHarness": {
-    "repository": "chogng/ash",
-    "revision": "ff7c617ce65b360b99f7117674e7801e50a3991e"
-  }
-}

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Unified diff context lines require their space prefix.
+*.patch whitespace=-blank-at-eol

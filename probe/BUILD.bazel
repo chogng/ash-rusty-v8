@@ -1,0 +1,12 @@
+load("@rules_rust//rust:defs.bzl", "rust_test")
+
+rust_test(
+    name = "probe-unit-tests",
+    crate_name = "v8_artifact_probe",
+    crate_root = "src/lib.rs",
+    srcs = ["src/lib.rs"],
+    compile_data = ["src/array_sort_regression.js"],
+    crate_features = ["sandbox"],
+    edition = "2024",
+    deps = ["@crates//:v8", "@crates//:pretty_assertions"],
+)

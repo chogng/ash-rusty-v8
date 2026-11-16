@@ -2,9 +2,22 @@ name: V8 source validation
 
 on:
   pull_request:
-    paths: &recipe-paths ["build-inputs.json", "upstream-source-lock.json"]
+    paths: &recipe-paths
+      - upstream-source-lock.json
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - MODULE.bazel
+      - MODULE.bazel.lock
+      - BUILD.bazel
+      - .bazelrc
+      - .bazelversion
+      - probe/**
+      - third_party/**
+      - bazel/**
+      - build/**
   push:
-    branches: [main]
+    branches: [ main ]
     paths: *recipe-paths
   workflow_dispatch:
 
@@ -20,53 +33,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      harness_revision: ${{ steps.harness.outputs.revision }}
       source_revision: ${{ steps.metadata.outputs.source_revision }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          path: .dependency-recipe
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Resolve immutable build harness
-        id: harness
-        shell: bash
-        run: |
-          python - <<'PY'
-          import hashlib, json, os, re
-          from pathlib import Path
-          source = json.loads(Path('.dependency-recipe/build-inputs.json').read_text(encoding='utf-8'))['buildHarness']
-          assert source['repository'] == 'chogng/ash'
-          assert re.fullmatch('[0-9a-f]{40}', source['revision'])
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('revision=' + source['revision'] + '\n')
-              pin = json.loads(Path('.dependency-recipe/upstream-source-lock.json').read_text(encoding='utf-8'))
-              output.write('source_hash=' + hashlib.sha256(json.dumps(pin, sort_keys=True).encode()).hexdigest() + '\n')
-          PY
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: chogng/ash
-          ref: ${{ steps.harness.outputs.revision }}
-          persist-credentials: false
-      - name: Verify the recipe and harness agree on the engine source
-        shell: bash
-        env:
-          SOURCE_HASH: ${{ steps.harness.outputs.source_hash }}
-        run: |
-          python - <<'PY'
-          import hashlib, json, os
-          from pathlib import Path
-          pin = json.loads(Path('third_party/v8/source-lock.json').read_text(encoding='utf-8'))
-          assert hashlib.sha256(json.dumps(pin, sort_keys=True).encode()).hexdigest() == os.environ['SOURCE_HASH']
-          PY
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
+      - name: Test standalone release contracts
+        run: python -B -m unittest -v build.v8.test_release build.v8.test_smoke
       - name: Validate source and consumer versions
         id: metadata
         run: python3 -B build/v8/release.py metadata --github-output "$GITHUB_OUTPUT"
 
   sources:
+    # Main keeps fixed dependencies cheap; full production is an explicit release job.
+    if: github.event_name != 'push'
     name: Patched source (${{ matrix.target }})
     needs: metadata
     runs-on: ${{ matrix.runner }}
@@ -92,13 +77,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: chogng/ash
-          ref: ${{ needs.metadata.outputs.harness_revision }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
-      - uses: ./.github/actions/setup-just
       - name: Enable upstream Windows symlinks
         if: runner.os == 'Windows'
         run: git config --global core.symlinks true
@@ -156,13 +139,13 @@ jobs:
           else
             python -B build/v8/release.py bazel-stage --target "$TARGET" --output "dist/$TARGET" --github-output "$GITHUB_OUTPUT"
           fi
-      - name: Execute sort regression and product mitigation on the new pair
+      - name: Execute the staged sandboxed engine
         env:
           RUSTY_V8_ARCHIVE: ${{ steps.stage.outputs.archive }}
           RUSTY_V8_SRC_BINDING_PATH: ${{ steps.stage.outputs.binding }}
         run: |
-          just test ash-v8-poc --locked --target "$TARGET" --features sandbox -- --test-threads=1
-          just test ash-v8-runtime --locked --target "$TARGET" -- --test-threads=1
+          python -B build/v8/smoke.py cargo-test --target "$TARGET" --artifacts "dist/$TARGET"
       - name: Execute the new pair through the Bazel consumer
         if: runner.os == 'Linux'
-        run: python -B build/v8/smoke.py bazel --target "$TARGET" --artifacts "dist/$TARGET" --output "$RUNNER_TEMP/v8-bazel-inputs"
+        run: python -B build/v8/smoke.py bazel --target "$TARGET" --artifacts "dist/$TARGET" --output
+          "$RUNNER_TEMP/v8-bazel-inputs"

@@ -1,0 +1,15 @@
+--- a/build.rs
++++ b/build.rs
+@@ -964,3 +964,12 @@
+ fn static_lib_dir() -> PathBuf {
++  // Like Codex, keep explicit Bazel archive inputs in the declared output tree.
++  if env::var_os("RUSTY_V8_ARCHIVE").is_some() {
++    return env::current_dir()
++      .unwrap()
++      .join(env::var_os("OUT_DIR").expect("OUT_DIR is not set"))
++      .join("gn_out")
++      .join("obj");
++  }
++
+   build_dir().join("gn_out").join("obj")
+ }
