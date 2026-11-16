@@ -14,7 +14,9 @@ https://github.com/chogng/ash/releases/tag/rusty-v8-v152.2.0
 Its native verification records remain linked there. No binaries are rebuilt or
 silently replaced during the import. The original release remains available.
 
-The source-validation workflow has its own queue and weekly schedule. Tagging a
+The source-validation workflow has its own queue. It runs when pinned build inputs
+or upstream source declarations change, or through manual dispatch. Fixed inputs
+do not trigger scheduled source rebuilds; workflow-only edits use manual validation. Tagging a
 new pinned version builds all eight targets, runs native consumer checks, verifies
 provenance and publishes an immutable prerelease without taking over `latest`.
 Manual release-workflow runs validate and stage artifacts without publishing.

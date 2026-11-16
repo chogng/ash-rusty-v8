@@ -2,12 +2,10 @@ name: V8 source validation
 
 on:
   pull_request:
-    paths: &recipe-paths ["build-inputs.json", "upstream-source-lock.json", ".github/workflows/**"]
+    paths: &recipe-paths ["build-inputs.json", "upstream-source-lock.json"]
   push:
     branches: [main]
     paths: *recipe-paths
-  schedule:
-    - cron: "17 3 * * 0"
   workflow_dispatch:
 
 permissions:
